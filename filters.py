@@ -36,6 +36,9 @@ class NapCatChatFilter:
             self._logger.warning(f"NapCat 用户 {sender_user_id} 在全局禁止名单中，消息被丢弃")
             return False
 
+        if not chat_config.enable_chat_list_filter:
+            return True
+
         if group_id:
             if not self._is_id_allowed_by_list_policy(group_id, chat_config.group_list_type, chat_config.group_list):
                 self._logger.warning(f"NapCat 群聊 {group_id} 未通过聊天名单过滤，消息被丢弃")

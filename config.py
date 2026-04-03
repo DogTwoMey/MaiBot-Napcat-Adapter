@@ -236,13 +236,22 @@ class NapCatChatConfig(PluginConfigBase):
     __ui_label__: ClassVar[str] = "聊天过滤"
     __ui_order__: ClassVar[int] = 2
 
+    enable_chat_list_filter: bool = Field(
+        default=True,
+        description="是否启用群聊与私聊名单过滤。",
+        json_schema_extra={
+            "hint": "关闭后将忽略群聊名单和私聊名单，仅保留全局屏蔽用户与官方机器人屏蔽规则。",
+            "label": "启用聊天名单过滤",
+            "order": 0,
+        },
+    )
     group_list_type: Literal["whitelist", "blacklist"] = Field(
         default=DEFAULT_CHAT_LIST_TYPE,
         description="群聊名单模式。",
         json_schema_extra={
             "hint": "白名单模式只接收列表内群聊，黑名单模式则忽略列表内群聊。",
             "label": "群聊名单模式",
-            "order": 0,
+            "order": 1,
         },
     )
     group_list: List[str] = Field(
@@ -251,7 +260,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "群号会被统一转换为字符串并自动去重。",
             "label": "群聊名单",
-            "order": 1,
+            "order": 2,
             "placeholder": "请输入群号",
         },
     )
@@ -261,7 +270,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "白名单模式只接收列表内私聊，黑名单模式则忽略列表内私聊。",
             "label": "私聊名单模式",
-            "order": 2,
+            "order": 3,
         },
     )
     private_list: List[str] = Field(
@@ -270,7 +279,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "用户 ID 会被统一转换为字符串并自动去重。",
             "label": "私聊名单",
-            "order": 3,
+            "order": 4,
             "placeholder": "请输入用户 ID",
         },
     )
@@ -280,7 +289,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "这些用户的消息会在进入 Host 之前被直接丢弃。",
             "label": "全局屏蔽用户",
-            "order": 4,
+            "order": 5,
             "placeholder": "请输入用户 ID",
         },
     )
@@ -290,7 +299,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "开启后会忽略来自 QQ 官方机器人或频道机器人的消息。",
             "label": "屏蔽官方机器人",
-            "order": 5,
+            "order": 6,
         },
     )
 

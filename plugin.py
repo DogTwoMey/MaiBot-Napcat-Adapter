@@ -182,6 +182,11 @@ class NapCatAdapterPlugin(
             self.ctx.logger.error("NapCat 适配器依赖 aiohttp，但当前环境未安装该依赖")
             return
 
+        if not settings.chat.enable_chat_list_filter:
+            self.ctx.logger.info(
+                "NapCat 聊天名单过滤已关闭：将忽略 group_list 与 private_list，仅保留 ban_user_id 和官方机器人屏蔽规则"
+            )
+
         runtime_bundle.transport.configure(settings.napcat_server)
         await runtime_bundle.transport.start()
 

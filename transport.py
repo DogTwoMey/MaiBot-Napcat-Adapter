@@ -56,6 +56,7 @@ class NapCatTransportClient:
         self._ws: Optional[AiohttpClientWebSocketResponse] = None
         self._stop_requested: bool = False
         self._connection_active: bool = False
+        self._warned_missing_token_for_ws_url: Optional[str] = None
 
     @classmethod
     def is_available(cls) -> bool:
@@ -73,6 +74,7 @@ class NapCatTransportClient:
             server_config: 最新生效的 NapCat 服务端配置。
         """
         self._server_config = server_config
+        self._warned_missing_token_for_ws_url = None
 
     async def start(self) -> None:
         """启动 NapCat 正向 WebSocket 连接循环。
@@ -154,17 +156,23 @@ class NapCatTransportClient:
 
             ws_url = server_config.build_ws_url()
             timeout = ClientTimeout(total=None, connect=10)
+            self._log_connection_attempt(ws_url, server_config)
 
             try:
                 async with ClientSession(headers=self._build_headers(server_config), timeout=timeout) as session:
                     async with session.ws_connect(ws_url, heartbeat=server_config.heartbeat_interval or None) as ws:
                         self._ws = ws
                         self._logger.info(f"NapCat 适配器已连接: {ws_url}")
-                        await self._receive_loop(ws)
+                        disconnect_reason = await self._receive_loop(ws)
+                        self._log_connection_closed(ws_url, server_config, disconnect_reason)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._logger.warning(f"NapCat 适配器连接失败: {exc}")
+                self._logger.warning(
+                    f"NapCat 适配器连接失败: {exc}"
+                    f"{self._build_missing_token_hint(server_config)}"
+                    f"{self._build_reconnect_hint(server_config)}"
+                )
             finally:
                 self._ws = None
                 await self._notify_connection_closed()
@@ -175,14 +183,18 @@ class NapCatTransportClient:
 
             await asyncio.sleep(server_config.reconnect_delay_sec)
 
-    async def _receive_loop(self, ws: AiohttpClientWebSocketResponse) -> None:
+    async def _receive_loop(self, ws: AiohttpClientWebSocketResponse) -> str:
         """持续消费 WebSocket 消息并分发处理。
 
         Args:
             ws: 当前活跃的 WebSocket 连接对象。
+
+        Returns:
+            str: 当前连接结束时的简要原因描述。
         """
         assert WSMsgType is not None
 
+        disconnect_reason = "未收到更多 WebSocket 消息，连接已结束"
         bootstrap_task = self._create_background_task(
             self._notify_connection_opened(),
             "napcat_adapter.bootstrap",
@@ -190,7 +202,26 @@ class NapCatTransportClient:
         try:
             async for ws_message in ws:
                 if ws_message.type != WSMsgType.TEXT:
-                    if ws_message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
+                    if ws_message.type == WSMsgType.CLOSE:
+                        disconnect_reason = self._describe_terminal_ws_message(
+                            ws=ws,
+                            ws_message=ws_message,
+                            message_label="收到服务端 CLOSE 帧",
+                        )
+                        break
+                    if ws_message.type == WSMsgType.CLOSED:
+                        disconnect_reason = self._describe_terminal_ws_message(
+                            ws=ws,
+                            ws_message=ws_message,
+                            message_label="WebSocket 已关闭",
+                        )
+                        break
+                    if ws_message.type == WSMsgType.ERROR:
+                        disconnect_reason = self._describe_terminal_ws_message(
+                            ws=ws,
+                            ws_message=ws_message,
+                            message_label="WebSocket 进入错误状态",
+                        )
                         break
                     continue
 
@@ -208,6 +239,8 @@ class NapCatTransportClient:
                 bootstrap_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await bootstrap_task
+
+        return disconnect_reason
 
     def _create_background_task(self, coroutine: Awaitable[Any], name: str) -> asyncio.Task[Any]:
         """创建并跟踪一个后台任务。
@@ -303,6 +336,100 @@ class NapCatTransportClient:
             Dict[str, str]: WebSocket 握手请求头。
         """
         return {"Authorization": f"Bearer {server_config.token}"} if server_config.token else {}
+
+    def _log_connection_attempt(self, ws_url: str, server_config: NapCatServerConfig) -> None:
+        """记录一次连接尝试的诊断信息。
+
+        Args:
+            ws_url: 即将连接的 WebSocket 地址。
+            server_config: 当前生效的 NapCat 服务端配置。
+        """
+        auth_mode = "已配置 token" if server_config.token else "未配置 token"
+        self._logger.debug(f"NapCat 适配器开始连接: {ws_url}（鉴权: {auth_mode}）")
+
+        if not server_config.token and self._warned_missing_token_for_ws_url != ws_url:
+            self._logger.warning(
+                "NapCat 适配器当前未配置 napcat_server.token；"
+                "若 NapCat 开启了访问令牌校验，连接可能会被服务端立即断开"
+            )
+            self._warned_missing_token_for_ws_url = ws_url
+
+    def _log_connection_closed(self, ws_url: str, server_config: NapCatServerConfig, reason: str) -> None:
+        """记录连接结束与重连计划。
+
+        Args:
+            ws_url: 当前连接对应的 WebSocket 地址。
+            server_config: 当前生效的 NapCat 服务端配置。
+            reason: 当前连接结束原因。
+        """
+        self._logger.warning(
+            f"NapCat 适配器连接已断开: {ws_url}，{reason}"
+            f"{self._build_missing_token_hint(server_config)}"
+            f"{self._build_reconnect_hint(server_config)}"
+        )
+
+    def _build_missing_token_hint(self, server_config: NapCatServerConfig) -> str:
+        """构造缺失 token 时的附加提示。
+
+        Args:
+            server_config: 当前生效的 NapCat 服务端配置。
+
+        Returns:
+            str: 缺失 token 时的提示文案；无需提示时返回空字符串。
+        """
+        if server_config.token:
+            return ""
+        return "；当前未配置 napcat_server.token，若服务端开启了访问令牌校验，请补全 token"
+
+    def _build_reconnect_hint(self, server_config: NapCatServerConfig) -> str:
+        """构造连接结束后的重连提示。
+
+        Args:
+            server_config: 当前生效的 NapCat 服务端配置。
+
+        Returns:
+            str: 自动重连提示；当停止请求已发出时返回空字符串。
+        """
+        if self._stop_requested:
+            return ""
+        return f"；将在 {server_config.reconnect_delay_sec:g} 秒后重连"
+
+    def _describe_terminal_ws_message(
+        self,
+        ws: AiohttpClientWebSocketResponse,
+        ws_message: Any,
+        message_label: str,
+    ) -> str:
+        """描述导致连接结束的终止类 WebSocket 消息。
+
+        Args:
+            ws: 当前活跃的 WebSocket 连接对象。
+            ws_message: aiohttp 返回的终止消息。
+            message_label: 当前终止消息的人类可读标签。
+
+        Returns:
+            str: 汇总后的终止原因描述。
+        """
+        details = []
+        close_code = getattr(ws, "close_code", None)
+        if close_code not in (None, 0):
+            details.append(f"close_code={close_code}")
+
+        message_data = getattr(ws_message, "data", None)
+        if message_data not in (None, "", 0, close_code):
+            details.append(f"data={message_data}")
+
+        message_extra = str(getattr(ws_message, "extra", "") or "").strip()
+        if message_extra:
+            details.append(f"extra={message_extra}")
+
+        ws_exception = ws.exception()
+        if ws_exception is not None:
+            details.append(f"exception={ws_exception}")
+
+        if not details:
+            return message_label
+        return f"{message_label}（{', '.join(str(item) for item in details)}）"
 
     def _parse_json_message(self, data: Any) -> Optional[Dict[str, Any]]:
         """解析 WebSocket 文本消息中的 JSON 数据。
