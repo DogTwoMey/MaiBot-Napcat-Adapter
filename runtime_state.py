@@ -19,6 +19,7 @@ class _GatewayCapabilityProtocol(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> bool:
         """向 Host 上报消息网关运行时状态。"""
+        ...
 
 
 class NapCatRuntimeStateManager:

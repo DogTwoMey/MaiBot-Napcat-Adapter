@@ -26,6 +26,40 @@ class NapCatApiSupportMixin:
         """确保运行时组件已经初始化。"""
         raise NotImplementedError
 
+    @staticmethod
+    def _coerce_int(value: object, field_name: str, expectation: str) -> int:
+        """将受支持的输入值转换为整数。
+
+        Args:
+            value: 待转换的值。
+            field_name: 字段名，用于错误提示。
+            expectation: 期望的取值描述，例如“正整数”。
+
+        Returns:
+            int: 转换后的整数值。
+
+        Raises:
+            ValueError: 当值无法转换为整数时抛出。
+        """
+        if isinstance(value, bool):
+            raise ValueError(f"{field_name} 必须是{expectation}")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            try:
+                return int(value)
+            except (OverflowError, ValueError) as exc:
+                raise ValueError(f"{field_name} 必须是{expectation}") from exc
+        if isinstance(value, str):
+            normalized_value = value.strip()
+            if not normalized_value:
+                raise ValueError(f"{field_name} 必须是{expectation}")
+            try:
+                return int(normalized_value)
+            except ValueError as exc:
+                raise ValueError(f"{field_name} 必须是{expectation}") from exc
+        raise ValueError(f"{field_name} 必须是{expectation}")
+
     def _require_query_service(self) -> "NapCatQueryService":
         """返回当前可用的 NapCat 查询服务。
 
@@ -70,10 +104,7 @@ class NapCatApiSupportMixin:
         Raises:
             ValueError: 当值无法转换为正整数时抛出。
         """
-        try:
-            normalized_value = int(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{field_name} 必须是正整数") from exc
+        normalized_value = NapCatApiSupportMixin._coerce_int(value, field_name, "正整数")
         if normalized_value <= 0:
             raise ValueError(f"{field_name} 必须是正整数")
         return normalized_value
@@ -92,10 +123,7 @@ class NapCatApiSupportMixin:
         Raises:
             ValueError: 当值无法转换为非负整数时抛出。
         """
-        try:
-            normalized_value = int(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{field_name} 必须是非负整数") from exc
+        normalized_value = NapCatApiSupportMixin._coerce_int(value, field_name, "非负整数")
         if normalized_value < 0:
             raise ValueError(f"{field_name} 必须是非负整数")
         return normalized_value

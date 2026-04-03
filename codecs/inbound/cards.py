@@ -2,38 +2,51 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, List, Mapping, Optional
 
 import hashlib
 import json
 import re
 
 from ...qq_emoji_list import QQ_FACE
+from ...types import NapCatSegment, NapCatSegments
+
+if TYPE_CHECKING:
+    from ...services import NapCatQueryService
 
 
 class NapCatInboundCardMixin:
     """封装入站 JSON 卡片与预览内容转换逻辑。"""
 
-    async def _build_json_segments(self, segment_data: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    if TYPE_CHECKING:
+        _query_service: NapCatQueryService
+
+        @staticmethod
+        def _build_text_segment(text: str) -> NapCatSegment: ...
+
+        @staticmethod
+        def _encode_binary(binary_data: bytes) -> str: ...
+
+    async def _build_json_segments(self, segment_data: Mapping[str, Any]) -> NapCatSegments:
         """将 JSON 卡片最佳努力转换为消息段列表。
 
         Args:
             segment_data: OneBot ``json`` 段的 ``data`` 字典。
 
         Returns:
-            List[Dict[str, Any]]: 转换后的消息段列表。
+            NapCatSegments: 转换后的消息段列表。
         """
         json_data = str(segment_data.get("data") or "").strip()
         if not json_data:
-            return [{"type": "text", "data": "[json]"}]
+            return [self._build_text_segment("[json]")]
 
         try:
             parsed_json = json.loads(json_data)
         except Exception:
-            return [{"type": "text", "data": "[json]"}]
+            return [self._build_text_segment("[json]")]
 
         if not isinstance(parsed_json, Mapping):
-            return [{"type": "text", "data": "[json]"}]
+            return [self._build_text_segment("[json]")]
 
         app_name = str(parsed_json.get("app") or "").strip()
         meta = parsed_json.get("meta", {})
@@ -57,13 +70,13 @@ class NapCatInboundCardMixin:
         if app_name == "com.tencent.giftmall.giftark":
             gift_text = self._build_gift_text(meta)
             if gift_text:
-                return [{"type": "text", "data": gift_text}]
+                return [self._build_text_segment(gift_text)]
 
         if app_name == "com.tencent.contact.lua":
-            return [{"type": "text", "data": self._build_contact_text(meta, "推荐联系人")}]
+            return [self._build_text_segment(self._build_contact_text(meta, "推荐联系人"))]
 
         if app_name == "com.tencent.troopsharecard":
-            return [{"type": "text", "data": self._build_contact_text(meta, "推荐群聊")}]
+            return [self._build_text_segment(self._build_contact_text(meta, "推荐群聊"))]
 
         if app_name == "com.tencent.tuwen.lua":
             return await self._build_preview_text_segments(
@@ -97,27 +110,27 @@ class NapCatInboundCardMixin:
         if app_name == "com.tencent.map":
             location_text = self._build_location_text(meta)
             if location_text:
-                return [{"type": "text", "data": location_text}]
+                return [self._build_text_segment(location_text)]
 
         if app_name == "com.tencent.together":
             together_text = self._build_together_text(meta)
             if together_text:
-                return [{"type": "text", "data": together_text}]
+                return [self._build_text_segment(together_text)]
 
         prompt = str(parsed_json.get("prompt") or "").strip()
         if not prompt and isinstance(meta, Mapping):
             prompt = str(meta.get("prompt") or "").strip()
         text = prompt or app_name or "json"
-        return [{"type": "text", "data": f"[json:{text}]"}]
+        return [self._build_text_segment(f"[json:{text}]")]
 
-    def _build_mannounce_segment(self, meta: Mapping[str, Any]) -> Dict[str, Any]:
+    def _build_mannounce_segment(self, meta: Mapping[str, Any]) -> NapCatSegment:
         """构造群公告文本段。
 
         Args:
             meta: JSON 卡片 ``meta`` 数据。
 
         Returns:
-            Dict[str, Any]: 群公告文本段。
+            NapCatSegment: 群公告文本段。
         """
         mannounce = meta.get("mannounce", {})
         if not isinstance(mannounce, Mapping):
@@ -138,16 +151,16 @@ class NapCatInboundCardMixin:
             content = text
         else:
             content = "[群公告]"
-        return {"type": "text", "data": content}
+        return self._build_text_segment(content)
 
-    def _build_music_card_segments(self, meta: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    def _build_music_card_segments(self, meta: Mapping[str, Any]) -> NapCatSegments:
         """构造音乐卡片文本段。
 
         Args:
             meta: JSON 卡片 ``meta`` 数据。
 
         Returns:
-            List[Dict[str, Any]]: 音乐卡片转换后的消息段列表。
+            NapCatSegments: 音乐卡片转换后的消息段列表。
         """
         music = meta.get("music", {})
         if not isinstance(music, Mapping):
@@ -162,13 +175,13 @@ class NapCatInboundCardMixin:
         if singer:
             text_parts.append(f"- {singer}")
         content = " ".join(text_parts).strip() or "[音乐分享]"
-        return [{"type": "text", "data": content}]
+        return [self._build_text_segment(content)]
 
     async def _build_preview_text_segments(
         self,
         text: str,
         preview_url: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> NapCatSegments:
         """构造“文本 + 预览图”消息段列表。
 
         Args:
@@ -176,22 +189,22 @@ class NapCatInboundCardMixin:
             preview_url: 预览图地址。
 
         Returns:
-            List[Dict[str, Any]]: 转换后的消息段列表。
+            NapCatSegments: 转换后的消息段列表。
         """
-        segments: List[Dict[str, Any]] = [{"type": "text", "data": text or "[卡片消息]"}]
+        segments: NapCatSegments = [self._build_text_segment(text or "[卡片消息]")]
         image_segment = await self._build_remote_image_segment(preview_url)
         if image_segment is not None:
             segments.append(image_segment)
         return segments
 
-    async def _build_remote_image_segment(self, image_url: str) -> Optional[Dict[str, Any]]:
+    async def _build_remote_image_segment(self, image_url: str) -> Optional[NapCatSegment]:
         """从远端图片地址构造图片消息段。
 
         Args:
             image_url: 图片地址。
 
         Returns:
-            Optional[Dict[str, Any]]: 成功时返回图片消息段，否则返回 ``None``。
+            Optional[NapCatSegment]: 成功时返回图片消息段，否则返回 ``None``。
         """
         normalized_url = str(image_url or "").strip()
         if not normalized_url:
@@ -349,14 +362,14 @@ class NapCatInboundCardMixin:
         tag = str(nested_payload.get("tag") or default_tag).strip() or default_tag
         return f"[{tag}] {title}".strip()
 
-    async def _build_forum_segments(self, meta: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    async def _build_forum_segments(self, meta: Mapping[str, Any]) -> NapCatSegments:
         """构造 QQ 频道帖子消息段。
 
         Args:
             meta: JSON 卡片 ``meta`` 数据。
 
         Returns:
-            List[Dict[str, Any]]: 频道帖子转换后的消息段列表。
+            NapCatSegments: 频道帖子转换后的消息段列表。
         """
         detail = meta.get("detail", {})
         if not isinstance(detail, Mapping):
@@ -377,7 +390,7 @@ class NapCatInboundCardMixin:
         if guild_name:
             text_prefix = f"{text_prefix} [{guild_name}]"
         text_content = f"{text_prefix}{nick}:{title}{face_content}"
-        segments: List[Dict[str, Any]] = [{"type": "text", "data": text_content}]
+        segments: NapCatSegments = [self._build_text_segment(text_content)]
 
         images = feed.get("images", [])
         if not isinstance(images, list):

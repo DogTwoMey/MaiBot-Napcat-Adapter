@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Coroutine
 
 from ..codecs.inbound import NapCatInboundCodec
 from ..codecs.notice import NapCatNoticeCodec
@@ -38,9 +38,9 @@ class NapCatRuntimeBuilder:
 
     def build(
         self,
-        on_connection_opened: Callable[[], Awaitable[None]],
-        on_connection_closed: Callable[[], Awaitable[None]],
-        on_payload: Callable[[dict[str, Any]], Awaitable[None]],
+        on_connection_opened: Callable[[], Coroutine[Any, Any, None]],
+        on_connection_closed: Callable[[], Coroutine[Any, Any, None]],
+        on_payload: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
         on_natural_lift: Callable[[dict[str, Any]], Awaitable[None]],
         on_heartbeat_timeout: Callable[[str], Awaitable[None]],
     ) -> NapCatRuntimeBundle:

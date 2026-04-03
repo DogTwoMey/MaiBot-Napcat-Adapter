@@ -442,7 +442,7 @@ class NapCatPluginSettings(PluginConfigBase):
 
         return self.plugin.should_connect()
 
-    def validate(self, logger: Any) -> bool:
+    def validate_runtime_config(self, logger: Any) -> bool:
         """校验当前配置是否满足启动连接的前提条件。
 
         Args:
@@ -498,8 +498,10 @@ def _normalize_list_mode(value: Any) -> Literal["whitelist", "blacklist"]:
     """
 
     normalized_value = _normalize_string(value)
-    if normalized_value in {"whitelist", "blacklist"}:
-        return normalized_value
+    if normalized_value == "whitelist":
+        return "whitelist"
+    if normalized_value == "blacklist":
+        return "blacklist"
     return DEFAULT_CHAT_LIST_TYPE
 
 

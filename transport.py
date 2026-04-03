@@ -1,6 +1,6 @@
 """NapCat 正向 WebSocket 传输层。"""
 
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Set, cast
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, Optional, Set, cast
 from uuid import uuid4
 
 import asyncio
@@ -32,9 +32,9 @@ class NapCatTransportClient:
     def __init__(
         self,
         logger: Any,
-        on_connection_opened: Callable[[], Awaitable[None]],
-        on_connection_closed: Callable[[], Awaitable[None]],
-        on_payload: Callable[[Dict[str, Any]], Awaitable[None]],
+        on_connection_opened: Callable[[], Coroutine[Any, Any, None]],
+        on_connection_closed: Callable[[], Coroutine[Any, Any, None]],
+        on_payload: Callable[[Dict[str, Any]], Coroutine[Any, Any, None]],
     ) -> None:
         """初始化传输层客户端。
 
@@ -242,7 +242,7 @@ class NapCatTransportClient:
 
         return disconnect_reason
 
-    def _create_background_task(self, coroutine: Awaitable[Any], name: str) -> asyncio.Task[Any]:
+    def _create_background_task(self, coroutine: Coroutine[Any, Any, Any], name: str) -> asyncio.Task[Any]:
         """创建并跟踪一个后台任务。
 
         Args:

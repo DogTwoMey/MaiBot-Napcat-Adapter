@@ -10,6 +10,7 @@ import time
 
 from ...qq_emoji_list import QQ_FACE
 from ...services import NapCatQueryService
+from ...types import NapCatIncomingSegment, NapCatIncomingSegments, NapCatPayload, NapCatSegment, NapCatSegments
 from .cards import NapCatInboundCardMixin
 from .text import NapCatInboundTextMixin
 
@@ -29,7 +30,7 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
 
     async def build_message_dict(
         self,
-        payload: Mapping[str, Any],
+        payload: NapCatPayload,
         self_id: str,
         sender_user_id: str,
         sender: Mapping[str, Any],
@@ -52,11 +53,10 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
         user_cardname = str(sender.get("card") or "").strip() or None
 
         raw_message, is_at = await self.convert_segments(payload, self_id)
-        raw_message_text = str(payload.get("raw_message") or "").strip()
         if not raw_message:
-            raw_message = [{"type": "text", "data": raw_message_text or "[unsupported]"}]
+            raw_message = [self._build_text_segment("[unsupported]")]
 
-        plain_text = self.build_plain_text(raw_message, raw_message_text)
+        plain_text = self.build_plain_text(raw_message)
         timestamp_seconds = payload.get("time")
         if not isinstance(timestamp_seconds, (int, float)):
             timestamp_seconds = time.time()
@@ -96,7 +96,7 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
             "display_message": plain_text,
         }
 
-    async def convert_segments(self, payload: Mapping[str, Any], self_id: str) -> Tuple[List[Dict[str, Any]], bool]:
+    async def convert_segments(self, payload: NapCatPayload, self_id: str) -> Tuple[NapCatSegments, bool]:
         """将 OneBot 消息段转换为 Host 消息段结构。
 
         Args:
@@ -104,26 +104,77 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
             self_id: 当前机器人账号 ID。
 
         Returns:
-            Tuple[List[Dict[str, Any]], bool]: 转换后的消息段列表，以及是否 @ 到当前机器人。
+            Tuple[NapCatSegments, bool]: 转换后的消息段列表，以及是否 @ 到当前机器人。
+
+        Raises:
+            ValueError: 当载荷缺少结构化 ``message`` 段列表时抛出。
+        """
+        message_payload = self._require_message_segments(payload)
+        return await self._convert_incoming_segments(message_payload, self_id)
+
+    def _require_message_segments(self, payload: NapCatPayload) -> NapCatIncomingSegments:
+        """从 NapCat 载荷中提取结构化消息段列表。
+
+        Args:
+            payload: NapCat / OneBot 原始载荷。
+
+        Returns:
+            NapCatIncomingSegments: 规范化后的结构化消息段列表。
+
+        Raises:
+            ValueError: 当 ``message`` 字段不是结构化段列表时抛出。
         """
         message_payload = payload.get("message")
-        if isinstance(message_payload, str):
-            parsed_message_payload = self._parse_cq_message_text(message_payload)
-            if parsed_message_payload:
-                message_payload = parsed_message_payload
-            else:
-                normalized_text = self._decode_cq_entities(message_payload).strip()
-                return ([{"type": "text", "data": normalized_text}] if normalized_text else []), False
-
         if not isinstance(message_payload, list):
-            return [], False
+            raise ValueError("NapCat 入站消息缺少结构化 message 段列表")
 
-        converted_segments: List[Dict[str, Any]] = []
-        is_at = False
+        normalized_segments = self._normalize_incoming_segments(message_payload)
+        if not normalized_segments:
+            raise ValueError("NapCat 入站消息未包含可识别的结构化消息段")
+        return normalized_segments
+
+    def _normalize_incoming_segments(self, message_payload: List[Any]) -> NapCatIncomingSegments:
+        """规范化 NapCat / OneBot 原始消息段列表。
+
+        Args:
+            message_payload: 原始 ``message`` 字段值。
+
+        Returns:
+            NapCatIncomingSegments: 过滤并标准化后的消息段列表。
+        """
+        normalized_segments: NapCatIncomingSegments = []
         for segment in message_payload:
             if not isinstance(segment, Mapping):
                 continue
+            segment_type = str(segment.get("type") or "").strip()
+            segment_data = segment.get("data", {})
+            if not segment_type or not isinstance(segment_data, Mapping):
+                continue
+            normalized_segments.append(
+                NapCatIncomingSegment(
+                    type=segment_type,
+                    data=dict(segment_data),
+                )
+            )
+        return normalized_segments
 
+    async def _convert_incoming_segments(
+        self,
+        message_payload: NapCatIncomingSegments,
+        self_id: str,
+    ) -> Tuple[NapCatSegments, bool]:
+        """将结构化 OneBot 消息段转换为 Host 消息段结构。
+
+        Args:
+            message_payload: NapCat / OneBot 结构化消息段列表。
+            self_id: 当前机器人账号 ID。
+
+        Returns:
+            Tuple[NapCatSegments, bool]: 转换后的消息段列表，以及是否 @ 到当前机器人。
+        """
+        converted_segments: NapCatSegments = []
+        is_at = False
+        for segment in message_payload:
             segment_type = str(segment.get("type") or "").strip()
             segment_data = segment.get("data", {})
             if not isinstance(segment_data, Mapping):
@@ -131,7 +182,7 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
 
             if segment_type == "text":
                 if text_value := str(segment_data.get("text") or ""):
-                    converted_segments.append({"type": "text", "data": text_value})
+                    converted_segments.append(self._build_text_segment(text_value))
                 continue
 
             if segment_type == "at":
@@ -185,18 +236,30 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
                 continue
 
             if segment_type in {"xml", "share"}:
-                converted_segments.append({"type": "text", "data": f"[{segment_type}]"})
+                converted_segments.append(self._build_text_segment(f"[{segment_type}]"))
 
         return converted_segments, is_at
 
-    async def _build_reply_segment(self, segment_data: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _build_text_segment(text: str) -> NapCatSegment:
+        """构造一条纯文本 Host 消息段。
+
+        Args:
+            text: 文本内容。
+
+        Returns:
+            NapCatSegment: Host 侧纯文本消息段。
+        """
+        return {"type": "text", "data": text}
+
+    async def _build_reply_segment(self, segment_data: Mapping[str, Any]) -> Optional[NapCatSegment]:
         """构造回复消息段。
 
         Args:
             segment_data: OneBot ``reply`` 段的 ``data`` 字典。
 
         Returns:
-            Optional[Dict[str, Any]]: 转换后的回复消息段；缺少消息 ID 时返回 ``None``。
+            Optional[NapCatSegment]: 转换后的回复消息段；缺少消息 ID 时返回 ``None``。
         """
         target_message_id = str(segment_data.get("id") or "").strip()
         if not target_message_id:
@@ -208,7 +271,7 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
             sender = message_detail.get("sender", {})
             if not isinstance(sender, Mapping):
                 sender = {}
-            reply_payload["target_message_content"] = str(message_detail.get("raw_message") or "").strip() or None
+            reply_payload["target_message_content"] = await self._build_reply_preview_text(message_detail)
             reply_payload["target_message_sender_id"] = (
                 str(message_detail.get("user_id") or sender.get("user_id") or "").strip() or None
             )
@@ -217,11 +280,29 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
 
         return {"type": "reply", "data": reply_payload}
 
+    async def _build_reply_preview_text(self, message_detail: NapCatPayload) -> Optional[str]:
+        """为回复引用构造结构化消息预览文本。
+
+        Args:
+            message_detail: ``get_msg`` 返回的消息详情。
+
+        Returns:
+            Optional[str]: 基于结构化消息段生成的预览文本；无法生成时返回 ``None``。
+        """
+        try:
+            reply_segments, _ = await self.convert_segments(message_detail, "")
+        except ValueError:
+            return None
+
+        if not reply_segments:
+            return None
+        return self.build_plain_text(reply_segments)
+
     async def _build_image_like_segment(
         self,
         segment_data: Mapping[str, Any],
         is_emoji: bool,
-    ) -> Dict[str, Any]:
+    ) -> NapCatSegment:
         """构造图片或表情消息段。
 
         Args:
@@ -229,7 +310,7 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
             is_emoji: 是否按表情组件处理。
 
         Returns:
-            Dict[str, Any]: 转换后的图片或表情消息段。
+            NapCatSegment: 转换后的图片或表情消息段。
         """
         subtype = self._normalize_numeric_segment_value(segment_data.get("sub_type"))
         actual_is_emoji = is_emoji or (subtype is not None and subtype not in {0, 4, 9})
@@ -237,7 +318,7 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
         image_url = str(segment_data.get("url") or "").strip()
         binary_data = await self._query_service.download_binary(image_url)
         if not binary_data:
-            return {"type": "text", "data": "[emoji]" if actual_is_emoji else "[image]"}
+            return self._build_text_segment("[emoji]" if actual_is_emoji else "[image]")
 
         return {
             "type": "emoji" if actual_is_emoji else "image",
@@ -246,32 +327,32 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
             "binary_data_base64": self._encode_binary(binary_data),
         }
 
-    async def _build_record_segment(self, segment_data: Mapping[str, Any]) -> Dict[str, Any]:
+    async def _build_record_segment(self, segment_data: Mapping[str, Any]) -> NapCatSegment:
         """构造语音消息段。
 
         Args:
             segment_data: OneBot ``record`` 段的 ``data`` 字典。
 
         Returns:
-            Dict[str, Any]: 转换后的语音或占位文本消息段。
+            NapCatSegment: 转换后的语音或占位文本消息段。
         """
         file_name = str(segment_data.get("file") or "").strip()
         file_id = str(segment_data.get("file_id") or "").strip() or None
         if not file_name:
-            return {"type": "text", "data": "[voice]"}
+            return self._build_text_segment("[voice]")
 
         record_detail = await self._query_service.get_record_detail(file_name=file_name, file_id=file_id)
         if record_detail is None:
-            return {"type": "text", "data": "[voice]"}
+            return self._build_text_segment("[voice]")
 
         record_base64 = str(record_detail.get("base64") or "").strip()
         if not record_base64:
-            return {"type": "text", "data": "[voice]"}
+            return self._build_text_segment("[voice]")
 
         try:
             binary_data = self._decode_binary(record_base64)
         except Exception:
-            return {"type": "text", "data": "[voice]"}
+            return self._build_text_segment("[voice]")
 
         return {
             "type": "voice",
@@ -280,27 +361,27 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
             "binary_data_base64": self._encode_binary(binary_data),
         }
 
-    def _build_face_text_segment(self, segment_data: Mapping[str, Any]) -> Dict[str, Any]:
+    def _build_face_text_segment(self, segment_data: Mapping[str, Any]) -> NapCatSegment:
         """构造 QQ 原生表情文本段。
 
         Args:
             segment_data: OneBot ``face`` 段的 ``data`` 字典。
 
         Returns:
-            Dict[str, Any]: 转换后的文本消息段。
+            NapCatSegment: 转换后的文本消息段。
         """
         face_id = str(segment_data.get("id") or "").strip()
         face_text = QQ_FACE.get(face_id, "[表情]")
-        return {"type": "text", "data": face_text}
+        return self._build_text_segment(face_text)
 
-    def _build_video_text_segment(self, segment_data: Mapping[str, Any]) -> Dict[str, Any]:
+    def _build_video_text_segment(self, segment_data: Mapping[str, Any]) -> NapCatSegment:
         """构造视频消息的可读文本段。
 
         Args:
             segment_data: OneBot ``video`` 段的 ``data`` 字典。
 
         Returns:
-            Dict[str, Any]: 转换后的文本消息段。
+            NapCatSegment: 转换后的文本消息段。
         """
         file_name = str(segment_data.get("file") or "").strip()
         file_size = str(segment_data.get("file_size") or "").strip()
@@ -310,17 +391,17 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
         if file_size:
             parts.append(f"大小: {file_size}")
         if parts:
-            return {"type": "text", "data": f"[视频] {'，'.join(parts)}"}
-        return {"type": "text", "data": "[视频]"}
+            return self._build_text_segment(f"[视频] {'，'.join(parts)}")
+        return self._build_text_segment("[视频]")
 
-    def _build_file_text_segment(self, segment_data: Mapping[str, Any]) -> Dict[str, Any]:
+    def _build_file_text_segment(self, segment_data: Mapping[str, Any]) -> NapCatSegment:
         """构造文件消息的可读文本段。
 
         Args:
             segment_data: OneBot ``file`` 段的 ``data`` 字典。
 
         Returns:
-            Dict[str, Any]: 转换后的文本消息段。
+            NapCatSegment: 转换后的文本消息段。
         """
         file_name = str(segment_data.get("file") or segment_data.get("name") or "").strip()
         file_size = str(segment_data.get("file_size") or "").strip()
@@ -335,16 +416,16 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
             file_text = f"[文件] {'，'.join(text_parts)}"
         if file_url:
             file_text = f"{file_text}，链接: {file_url}"
-        return {"type": "text", "data": file_text}
+        return self._build_text_segment(file_text)
 
-    async def _build_forward_segment(self, segment_data: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    async def _build_forward_segment(self, segment_data: Mapping[str, Any]) -> Optional[NapCatSegment]:
         """构造合并转发消息段。
 
         Args:
             segment_data: OneBot ``forward`` 段的 ``data`` 字典。
 
         Returns:
-            Optional[Dict[str, Any]]: 转换后的合并转发消息段；失败时返回 ``None``。
+            Optional[NapCatSegment]: 转换后的合并转发消息段；失败时返回 ``None``。
         """
         message_id = str(segment_data.get("id") or "").strip()
         if not message_id:
@@ -352,11 +433,11 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
 
         forward_detail = await self._query_service.get_forward_message(message_id)
         if forward_detail is None:
-            return {"type": "text", "data": "[forward]"}
+            return self._build_text_segment("[forward]")
 
         messages = forward_detail.get("messages", [])
         if not isinstance(messages, list):
-            return {"type": "text", "data": "[forward]"}
+            return self._build_text_segment("[forward]")
 
         forward_nodes: List[Dict[str, Any]] = []
         for forward_message in messages:
@@ -373,15 +454,15 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
                     "user_nickname": str(sender.get("nickname") or sender.get("name") or "未知用户"),
                     "user_cardname": str(sender.get("card") or "").strip() or None,
                     "message_id": str(forward_message.get("message_id") or uuid4().hex),
-                    "content": content_segments or [{"type": "text", "data": "[empty]"}],
+                    "content": content_segments or [self._build_text_segment("[empty]")],
                 }
             )
 
         if not forward_nodes:
-            return {"type": "text", "data": "[forward]"}
+            return self._build_text_segment("[forward]")
         return {"type": "forward", "data": forward_nodes}
 
-    async def _convert_forward_content(self, raw_content: Any, self_id: str) -> List[Dict[str, Any]]:
+    async def _convert_forward_content(self, raw_content: Any, self_id: str) -> NapCatSegments:
         """转换转发节点内部的消息段列表。
 
         Args:
@@ -389,8 +470,14 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
             self_id: 当前机器人账号 ID。
 
         Returns:
-            List[Dict[str, Any]]: 转换后的消息段列表。
+            NapCatSegments: 转换后的消息段列表。
         """
-        pseudo_payload: Dict[str, Any] = {"message": raw_content}
-        segments, _ = await self.convert_segments(pseudo_payload, self_id)
+        if not isinstance(raw_content, list):
+            return []
+
+        normalized_segments = self._normalize_incoming_segments(raw_content)
+        if not normalized_segments:
+            return []
+
+        segments, _ = await self._convert_incoming_segments(normalized_segments, self_id)
         return segments

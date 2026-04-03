@@ -18,11 +18,13 @@ class _GatewayCapabilityProtocol(Protocol):
         self,
         gateway_name: str,
         message: Dict[str, Any],
-        route_metadata: Dict[str, Any],
+        *,
+        route_metadata: Optional[Dict[str, Any]] = None,
         external_message_id: str = "",
-        dedupe_key: Optional[str] = None,
+        dedupe_key: str = "",
     ) -> bool:
         """向 Host 注入一条消息。"""
+        ...
 
 
 class NapCatEventRouter:
@@ -113,7 +115,12 @@ class NapCatEventRouter:
         ):
             return
 
-        message_dict = await runtime.inbound_codec.build_message_dict(payload, self_id, sender_user_id, sender)
+        try:
+            message_dict = await runtime.inbound_codec.build_message_dict(payload, self_id, sender_user_id, sender)
+        except ValueError as exc:
+            self._logger.warning(f"NapCat 入站消息格式不受支持，已丢弃: {exc}")
+            return
+
         route_metadata = self._build_route_metadata(self_id, settings.napcat_server.connection_id)
         external_message_id = str(payload.get("message_id") or "").strip()
         accepted = await self._gateway_capability.route_message(
@@ -162,7 +169,7 @@ class NapCatEventRouter:
 
         route_metadata = self._build_route_metadata(self_id, connection_id)
         external_message_id = str(payload.get("message_id") or "").strip()
-        dedupe_key = runtime.notice_codec.build_notice_dedupe_key(payload)
+        dedupe_key = runtime.notice_codec.build_notice_dedupe_key(payload) or ""
         accepted = await self._gateway_capability.route_message(
             gateway_name=self._gateway_name,
             message=message_dict,

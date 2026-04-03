@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Dict, Mapping, Optional, cast
 
-from maibot_sdk import MaiBotPlugin, MessageGateway
+from maibot_sdk import MaiBotPlugin, MessageGateway, PluginConfigBase
 
 from .apis import (
     NapCatAccountApiMixin,
@@ -36,7 +36,7 @@ class NapCatAdapterPlugin(
 ):
     """NapCat 消息网关与 QQ 能力插件。"""
 
-    config_model: ClassVar[type[NapCatPluginSettings]] = NapCatPluginSettings
+    config_model: ClassVar[type[PluginConfigBase] | None] = NapCatPluginSettings
 
     def __init__(self) -> None:
         """初始化 NapCat 适配器插件实例。"""
@@ -176,7 +176,7 @@ class NapCatAdapterPlugin(
         if not settings.should_connect():
             self.ctx.logger.info("NapCat 适配器保持空闲状态，因为插件或配置未启用")
             return
-        if not settings.validate(self.ctx.logger):
+        if not settings.validate_runtime_config(self.ctx.logger):
             return
         if not runtime_bundle.transport.is_available():
             self.ctx.logger.error("NapCat 适配器依赖 aiohttp，但当前环境未安装该依赖")
