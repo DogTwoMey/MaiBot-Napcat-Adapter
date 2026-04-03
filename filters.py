@@ -1,8 +1,8 @@
 """NapCat 入站消息过滤。"""
 
-from typing import Any, Set
+from typing import Any, Collection
 
-from napcat_adapter.config import NapCatChatConfig
+from .config import NapCatChatConfig
 
 
 class NapCatChatFilter:
@@ -52,13 +52,13 @@ class NapCatChatFilter:
         return True
 
     @staticmethod
-    def _is_id_allowed_by_list_policy(target_id: str, list_type: str, configured_ids: Set[str]) -> bool:
+    def _is_id_allowed_by_list_policy(target_id: str, list_type: str, configured_ids: Collection[str]) -> bool:
         """根据白名单或黑名单规则判断目标 ID 是否允许通过。
 
         Args:
             target_id: 待检查的目标 ID。
             list_type: 名单模式，仅支持 ``whitelist`` 或 ``blacklist``。
-            configured_ids: 配置中的 ID 集合。
+            configured_ids: 配置中的 ID 集合或列表。
 
         Returns:
             bool: 若目标 ID 允许通过，则返回 ``True``。

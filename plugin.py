@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, ClassVar, Dict, Mapping, Optional, cast
 
 from maibot_sdk import MaiBotPlugin, MessageGateway
 
@@ -36,23 +36,15 @@ class NapCatAdapterPlugin(
 ):
     """NapCat 消息网关与 QQ 能力插件。"""
 
+    config_model: ClassVar[type[NapCatPluginSettings]] = NapCatPluginSettings
+
     def __init__(self) -> None:
         """初始化 NapCat 适配器插件实例。"""
         super().__init__()
-        self._plugin_config: Dict[str, Any] = {}
-        self._settings: Optional[NapCatPluginSettings] = None
         self._action_service: Optional[NapCatActionService] = None
         self._query_service: Optional[NapCatQueryService] = None
         self._event_router: Optional[NapCatEventRouter] = None
         self._runtime_bundle: Optional[NapCatRuntimeBundle] = None
-
-    def set_plugin_config(self, config: Dict[str, Any]) -> None:
-        """设置插件配置内容。
-
-        Args:
-            config: Runner 注入的 ``config.toml`` 解析结果。
-        """
-        self._plugin_config = config if isinstance(config, dict) else {}
 
     async def on_load(self) -> None:
         """在插件加载时根据配置决定是否启动连接。"""
@@ -74,7 +66,6 @@ class NapCatAdapterPlugin(
             return
 
         self.set_plugin_config(config_data)
-        self._settings = None
         if version:
             self.ctx.logger.debug(f"NapCat 适配器收到配置更新通知: {version}")
         await self._restart_connection_if_needed()
@@ -173,9 +164,7 @@ class NapCatAdapterPlugin(
         Returns:
             NapCatPluginSettings: 当前生效的插件配置。
         """
-        if self._settings is None:
-            self._settings = NapCatPluginSettings.from_mapping(self._plugin_config, self.ctx.logger)
-        return self._settings
+        return cast(NapCatPluginSettings, self.config)
 
     async def _restart_connection_if_needed(self) -> None:
         """根据当前配置重启连接循环。"""
