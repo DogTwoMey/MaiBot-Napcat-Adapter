@@ -113,14 +113,33 @@ class NapCatAdapterPlugin(
             }
 
         response_data = response.get("data", {})
+        internal_message_id = str(message.get("message_id") or "").strip()
         external_message_id = ""
         if isinstance(response_data, Mapping):
             external_message_id = str(response_data.get("message_id") or "")
 
+        adapter_callbacks = []
+        if internal_message_id and external_message_id and internal_message_id != external_message_id:
+            adapter_callbacks.append(
+                {
+                    "name": "message_id_echo",
+                    "payload": {
+                        "content": {
+                            "type": "echo",
+                            "echo": internal_message_id,
+                            "actual_id": external_message_id,
+                        }
+                    },
+                }
+            )
+
         return {
             "success": True,
             "external_message_id": external_message_id or None,
-            "metadata": {"action": action_name},
+            "metadata": {
+                "action": action_name,
+                "adapter_callbacks": adapter_callbacks,
+            },
         }
 
     def _ensure_runtime_components(self) -> None:
