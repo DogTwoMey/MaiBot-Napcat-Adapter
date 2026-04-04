@@ -427,40 +427,169 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
         Returns:
             Optional[NapCatSegment]: 转换后的合并转发消息段；失败时返回 ``None``。
         """
-        message_id = str(segment_data.get("id") or "").strip()
-        if not message_id:
-            return None
+        inline_messages = self._extract_forward_messages(segment_data)
+        messages = inline_messages
 
-        forward_detail = await self._query_service.get_forward_message(message_id)
-        if forward_detail is None:
-            return self._build_text_segment("[forward]")
+        if messages is None:
+            message_id = str(segment_data.get("id") or "").strip()
+            if not message_id:
+                return None
 
-        messages = forward_detail.get("messages", [])
+            forward_detail = await self._query_service.get_forward_message(message_id)
+            if forward_detail is None:
+                return self._build_text_segment("[forward]")
+
+            messages = self._extract_forward_messages(forward_detail)
+
         if not isinstance(messages, list):
             return self._build_text_segment("[forward]")
 
+        forward_nodes = await self._build_forward_nodes(messages)
+        if not forward_nodes:
+            return self._build_text_segment("[forward]")
+        return {"type": "forward", "data": forward_nodes}
+
+    def _extract_forward_messages(self, payload: Mapping[str, Any]) -> Optional[List[Any]]:
+        """从转发载荷中提取节点列表。
+
+        Args:
+            payload: 转发段 ``data`` 或 ``get_forward_msg`` 返回的载荷。
+
+        Returns:
+            Optional[List[Any]]: 提取到的节点列表；当载荷中不存在节点列表时返回 ``None``。
+        """
+        direct_messages = payload.get("messages")
+        if isinstance(direct_messages, list):
+            return direct_messages
+
+        direct_content = payload.get("content")
+        if isinstance(direct_content, list):
+            return direct_content
+
+        nested_data = payload.get("data")
+        if isinstance(nested_data, Mapping):
+            nested_messages = nested_data.get("messages")
+            if isinstance(nested_messages, list):
+                return nested_messages
+
+            nested_content = nested_data.get("content")
+            if isinstance(nested_content, list):
+                return nested_content
+
+        return None
+
+    async def _build_forward_nodes(self, messages: List[Any]) -> List[Dict[str, Any]]:
+        """将 NapCat 转发节点列表转换为 Host 转发节点列表。
+
+        Args:
+            messages: NapCat 返回的转发节点列表。
+
+        Returns:
+            List[Dict[str, Any]]: Host 侧可识别的转发节点列表。
+        """
         forward_nodes: List[Dict[str, Any]] = []
         for forward_message in messages:
             if not isinstance(forward_message, Mapping):
                 continue
-            raw_content = forward_message.get("content", [])
+
+            raw_content = self._extract_forward_node_content(forward_message)
             content_segments = await self._convert_forward_content(raw_content, "")
-            sender = forward_message.get("sender", {})
-            if not isinstance(sender, Mapping):
-                sender = {}
+            sender = self._extract_forward_node_sender(forward_message)
+
+            node_data = forward_message.get("data", {})
+            if not isinstance(node_data, Mapping):
+                node_data = {}
+
             forward_nodes.append(
                 {
-                    "user_id": str(sender.get("user_id") or sender.get("uin") or "").strip() or None,
-                    "user_nickname": str(sender.get("nickname") or sender.get("name") or "未知用户"),
-                    "user_cardname": str(sender.get("card") or "").strip() or None,
-                    "message_id": str(forward_message.get("message_id") or uuid4().hex),
+                    "user_id": str(
+                        sender.get("user_id")
+                        or sender.get("uin")
+                        or node_data.get("user_id")
+                        or node_data.get("uin")
+                        or ""
+                    ).strip()
+                    or None,
+                    "user_nickname": str(
+                        sender.get("nickname")
+                        or sender.get("name")
+                        or node_data.get("nickname")
+                        or node_data.get("name")
+                        or "未知用户"
+                    ),
+                    "user_cardname": str(sender.get("card") or node_data.get("card") or "").strip() or None,
+                    "message_id": str(
+                        forward_message.get("message_id")
+                        or forward_message.get("id")
+                        or node_data.get("id")
+                        or uuid4().hex
+                    ),
                     "content": content_segments or [self._build_text_segment("[empty]")],
                 }
             )
+        return forward_nodes
 
-        if not forward_nodes:
-            return self._build_text_segment("[forward]")
-        return {"type": "forward", "data": forward_nodes}
+    def _extract_forward_node_content(self, forward_message: Mapping[str, Any]) -> Any:
+        """提取单个转发节点中的消息段列表。
+
+        Args:
+            forward_message: NapCat 返回的单个转发节点。
+
+        Returns:
+            Any: 原始消息段列表；不存在时返回空列表。
+        """
+        direct_content = forward_message.get("content")
+        if isinstance(direct_content, list):
+            return direct_content
+
+        direct_message = forward_message.get("message")
+        if isinstance(direct_message, list):
+            return direct_message
+
+        node_data = forward_message.get("data", {})
+        if not isinstance(node_data, Mapping):
+            return []
+
+        nested_content = node_data.get("content")
+        if isinstance(nested_content, list):
+            return nested_content
+
+        nested_message = node_data.get("message")
+        if isinstance(nested_message, list):
+            return nested_message
+
+        return []
+
+    def _extract_forward_node_sender(self, forward_message: Mapping[str, Any]) -> Mapping[str, Any]:
+        """提取单个转发节点的发送者信息。
+
+        Args:
+            forward_message: NapCat 返回的单个转发节点。
+
+        Returns:
+            Mapping[str, Any]: 归一化后的发送者信息映射。
+        """
+        sender = forward_message.get("sender", {})
+        if isinstance(sender, Mapping):
+            return sender
+
+        node_data = forward_message.get("data", {})
+        if not isinstance(node_data, Mapping):
+            return {}
+
+        normalized_sender: Dict[str, Any] = {}
+        user_id = str(node_data.get("user_id") or node_data.get("uin") or "").strip()
+        nickname = str(node_data.get("nickname") or node_data.get("name") or "").strip()
+        cardname = str(node_data.get("card") or "").strip()
+        if user_id:
+            normalized_sender["user_id"] = user_id
+            normalized_sender["uin"] = user_id
+        if nickname:
+            normalized_sender["nickname"] = nickname
+            normalized_sender["name"] = nickname
+        if cardname:
+            normalized_sender["card"] = cardname
+        return normalized_sender
 
     async def _convert_forward_content(self, raw_content: Any, self_id: str) -> NapCatSegments:
         """转换转发节点内部的消息段列表。

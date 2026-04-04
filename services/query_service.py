@@ -186,7 +186,7 @@ class NapCatQueryService:
             Optional[NapCatPayloadDict]: 合并转发消息详情；失败时返回 ``None``。
         """
         response_data = await self._safe_call_action_data("get_forward_msg", {"message_id": message_id})
-        return response_data if isinstance(response_data, dict) else None
+        return self._normalize_forward_payload(response_data)
 
     async def get_record_detail(self, file_name: str, file_id: Optional[str] = None) -> Optional[NapCatPayloadDict]:
         """获取语音文件详情。
@@ -460,4 +460,48 @@ class NapCatQueryService:
             action_name,
             response_data,
         )
+        return None
+
+    def _normalize_forward_payload(self, response_data: Any) -> Optional[NapCatPayloadDict]:
+        """将合并转发响应归一化为统一字典结构。
+
+        NapCat 的 ``get_forward_msg`` 在不同版本下，``data`` 可能直接返回节点列表，
+        也可能返回 ``{\"messages\": [...]}``，甚至包在 ``content`` 字段中。
+
+        Args:
+            response_data: ``get_forward_msg`` 的原始 ``data`` 字段。
+
+        Returns:
+            Optional[NapCatPayloadDict]: 归一化后的转发消息详情；失败时返回 ``None``。
+        """
+        if isinstance(response_data, list):
+            return {"messages": [dict(item) for item in response_data if isinstance(item, Mapping)]}
+
+        if not isinstance(response_data, Mapping):
+            self._logger.warning(
+                "NapCat 转发接口返回了无法识别的数据类型: type=%s payload=%r",
+                type(response_data).__name__,
+                response_data,
+            )
+            return None
+
+        direct_messages = response_data.get("messages")
+        if isinstance(direct_messages, list):
+            return dict(response_data)
+
+        direct_content = response_data.get("content")
+        if isinstance(direct_content, list):
+            return {"messages": [dict(item) for item in direct_content if isinstance(item, Mapping)]}
+
+        nested_data = response_data.get("data")
+        if isinstance(nested_data, Mapping):
+            nested_messages = nested_data.get("messages")
+            if isinstance(nested_messages, list):
+                return {"messages": [dict(item) for item in nested_messages if isinstance(item, Mapping)]}
+
+            nested_content = nested_data.get("content")
+            if isinstance(nested_content, list):
+                return {"messages": [dict(item) for item in nested_content if isinstance(item, Mapping)]}
+
+        self._logger.warning("NapCat 转发接口未返回可识别的转发节点列表: payload=%r", response_data)
         return None
