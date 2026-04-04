@@ -11,6 +11,7 @@ import time
 from ...qq_emoji_list import QQ_FACE
 from ...services import NapCatQueryService
 from ...types import NapCatIncomingSegment, NapCatIncomingSegments, NapCatPayload, NapCatSegment, NapCatSegments
+from ..notice.helpers import normalize_optional_string
 from .cards import NapCatInboundCardMixin
 from .text import NapCatInboundTextMixin
 
@@ -110,7 +111,8 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
             ValueError: 当载荷缺少结构化 ``message`` 段列表时抛出。
         """
         message_payload = self._require_message_segments(payload)
-        return await self._convert_incoming_segments(message_payload, self_id)
+        group_id = str(payload.get("group_id") or "").strip()
+        return await self._convert_incoming_segments(message_payload, self_id, group_id)
 
     def _require_message_segments(self, payload: NapCatPayload) -> NapCatIncomingSegments:
         """从 NapCat 载荷中提取结构化消息段列表。
@@ -162,17 +164,20 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
         self,
         message_payload: NapCatIncomingSegments,
         self_id: str,
+        group_id: str,
     ) -> Tuple[NapCatSegments, bool]:
         """将结构化 OneBot 消息段转换为 Host 消息段结构。
 
         Args:
             message_payload: NapCat / OneBot 结构化消息段列表。
             self_id: 当前机器人账号 ID。
+            group_id: 当前消息所在群号；私聊消息为空字符串。
 
         Returns:
             Tuple[NapCatSegments, bool]: 转换后的消息段列表，以及是否 @ 到当前机器人。
         """
         converted_segments: NapCatSegments = []
+        at_target_cache: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
         is_at = False
         for segment in message_payload:
             segment_type = str(segment.get("type") or "").strip()
@@ -187,13 +192,22 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
 
             if segment_type == "at":
                 if target_user_id := str(segment_data.get("qq") or "").strip():
+                    if target_user_id in at_target_cache:
+                        target_user_nickname, target_user_cardname = at_target_cache[target_user_id]
+                    else:
+                        target_user_nickname, target_user_cardname = await self._resolve_at_target_info(
+                            group_id=group_id,
+                            target_user_id=target_user_id,
+                        )
+                        at_target_cache[target_user_id] = (target_user_nickname, target_user_cardname)
+
                     converted_segments.append(
                         {
                             "type": "at",
                             "data": {
                                 "target_user_id": target_user_id,
-                                "target_user_nickname": None,
-                                "target_user_cardname": None,
+                                "target_user_nickname": target_user_nickname,
+                                "target_user_cardname": target_user_cardname,
                             },
                         }
                     )
@@ -239,6 +253,41 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
                 converted_segments.append(self._build_text_segment(f"[{segment_type}]"))
 
         return converted_segments, is_at
+
+    async def _resolve_at_target_info(
+        self,
+        group_id: str,
+        target_user_id: str,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """解析 ``at`` 目标的展示信息。
+
+        Args:
+            group_id: 当前消息所在群号；私聊消息为空字符串。
+            target_user_id: 被 ``at`` 的用户号。
+
+        Returns:
+            Tuple[Optional[str], Optional[str]]: 依次返回 QQ 昵称和群昵称。
+        """
+        if not target_user_id or target_user_id == "all":
+            return None, None
+
+        target_user_nickname: Optional[str] = None
+        target_user_cardname: Optional[str] = None
+
+        if group_id:
+            member_info = await self._query_service.get_group_member_info(group_id, target_user_id, no_cache=True)
+            if member_info is not None:
+                target_user_nickname = normalize_optional_string(member_info.get("nickname"))
+                target_user_cardname = normalize_optional_string(member_info.get("card"))
+
+        if target_user_nickname or target_user_cardname:
+            return target_user_nickname, target_user_cardname
+
+        stranger_info = await self._query_service.get_stranger_info(target_user_id)
+        if stranger_info is None:
+            return None, None
+
+        return normalize_optional_string(stranger_info.get("nickname")), target_user_cardname
 
     @staticmethod
     def _build_text_segment(text: str) -> NapCatSegment:
@@ -608,5 +657,5 @@ class NapCatInboundCodec(NapCatInboundCardMixin, NapCatInboundTextMixin):
         if not normalized_segments:
             return []
 
-        segments, _ = await self._convert_incoming_segments(normalized_segments, self_id)
+        segments, _ = await self._convert_incoming_segments(normalized_segments, self_id, "")
         return segments

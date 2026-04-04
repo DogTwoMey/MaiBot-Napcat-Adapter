@@ -30,7 +30,14 @@ class NapCatInboundTextMixin:
             if item_type == "text":
                 plain_text_parts.append(str(item_data or ""))
             elif item_type == "at" and isinstance(item_data, Mapping):
-                plain_text_parts.append(f"@{item_data.get('target_user_id') or ''}")
+                at_target_name = str(
+                    item_data.get("target_user_cardname")
+                    or item_data.get("target_user_nickname")
+                    or item_data.get("target_user_id")
+                    or ""
+                ).strip()
+                if at_target_name:
+                    plain_text_parts.append(f"@{at_target_name}")
             elif item_type == "reply":
                 plain_text_parts.append("[reply]")
             elif item_type == "forward":
