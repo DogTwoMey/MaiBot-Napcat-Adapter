@@ -54,16 +54,20 @@ class NapCatQueryService:
         response_data = await self._safe_call_action_data("get_login_info", {})
         return response_data if isinstance(response_data, dict) else None
 
-    async def get_stranger_info(self, user_id: str) -> Optional[NapCatPayloadDict]:
+    async def get_stranger_info(self, user_id: str, no_cache: bool = False) -> Optional[NapCatPayloadDict]:
         """获取陌生人信息。
 
         Args:
             user_id: 用户号。
+            no_cache: 是否禁用缓存。
 
         Returns:
             Optional[NapCatPayloadDict]: 陌生人信息字典；失败时返回 ``None``。
         """
-        response_data = await self._safe_call_action_data("get_stranger_info", {"user_id": user_id})
+        response_data = await self._safe_call_action_data(
+            "get_stranger_info",
+            {"user_id": user_id, "no_cache": bool(no_cache)},
+        )
         return response_data if isinstance(response_data, dict) else None
 
     async def get_friend_list(self, no_cache: bool = False) -> Optional[NapCatPayloadList]:
@@ -176,31 +180,57 @@ class NapCatQueryService:
         response_data = await self._safe_call_action_data("get_msg", {"message_id": message_id})
         return response_data if isinstance(response_data, dict) else None
 
-    async def get_forward_message(self, message_id: str) -> Optional[NapCatPayloadDict]:
+    async def get_forward_message(
+        self,
+        message_id: Optional[str] = None,
+        forward_id: Optional[str] = None,
+    ) -> Optional[NapCatPayloadDict]:
         """获取合并转发消息详情。
 
         Args:
             message_id: 转发消息 ID。
+            forward_id: NapCat 官方文档中的兼容字段 ``id``。
 
         Returns:
             Optional[NapCatPayloadDict]: 合并转发消息详情；失败时返回 ``None``。
         """
-        response_data = await self._safe_call_action_data("get_forward_msg", {"message_id": message_id})
+        params: NapCatActionResponse = {}
+        if message_id:
+            params["message_id"] = message_id
+        if forward_id:
+            params["id"] = forward_id
+        if not params:
+            raise ValueError("message_id 或 id 至少提供一个")
+
+        response_data = await self._safe_call_action_data("get_forward_msg", params)
         return self._normalize_forward_payload(response_data)
 
-    async def get_record_detail(self, file_name: str, file_id: Optional[str] = None) -> Optional[NapCatPayloadDict]:
+    async def get_record_detail(
+        self,
+        file_name: Optional[str] = None,
+        file_id: Optional[str] = None,
+        out_format: str = "wav",
+    ) -> Optional[NapCatPayloadDict]:
         """获取语音文件详情。
 
         Args:
             file_name: 语音文件名。
             file_id: 可选文件 ID。
+            out_format: 输出格式。
 
         Returns:
             Optional[NapCatPayloadDict]: 语音详情字典；失败时返回 ``None``。
         """
-        params: NapCatActionResponse = {"file": file_name, "out_format": "wav"}
+        params: NapCatActionResponse = {}
+        if file_name:
+            params["file"] = file_name
         if file_id:
             params["file_id"] = file_id
+        if out_format:
+            params["out_format"] = out_format
+        if not params.get("file") and not params.get("file_id"):
+            raise ValueError("file 或 file_id 至少提供一个")
+
         response_data = await self._safe_call_action_data("get_record", params)
         return response_data if isinstance(response_data, dict) else None
 
@@ -285,12 +315,18 @@ class NapCatQueryService:
             },
         )
 
-    async def send_poke(self, user_id: int, group_id: Optional[int] = None) -> NapCatActionResponse:
+    async def send_poke(
+        self,
+        user_id: int,
+        group_id: Optional[int] = None,
+        target_id: Optional[int] = None,
+    ) -> NapCatActionResponse:
         """发送戳一戳。
 
         Args:
             user_id: 目标用户号。
             group_id: 可选群号；私聊时为空。
+            target_id: NapCat 官方 ``send_poke`` 动作支持的目标 ID。
 
         Returns:
             NapCatActionResponse: NapCat 原始响应字典。
@@ -298,6 +334,8 @@ class NapCatQueryService:
         params: NapCatActionResponse = {"user_id": user_id}
         if group_id is not None:
             params["group_id"] = group_id
+        if target_id is not None:
+            params["target_id"] = target_id
         return await self.call_action("send_poke", params)
 
     async def delete_message(self, message_id: int) -> NapCatActionResponse:

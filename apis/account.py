@@ -39,17 +39,23 @@ class NapCatAccountApiMixin(NapCatApiSupportMixin):
         )
 
     @API("adapter.napcat.account.get_stranger_info", description="获取陌生人信息", version="1", public=True)
-    async def api_get_stranger_info(self, user_id: NapCatApiIdInput) -> Optional[Dict[str, Any]]:
+    async def api_get_stranger_info(
+        self,
+        user_id: NapCatApiIdInput,
+        no_cache: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         """获取陌生人信息。
 
         Args:
             user_id: 用户号。
+            no_cache: 是否禁用缓存。
 
         Returns:
             Optional[Dict[str, Any]]: 陌生人信息字典；失败时返回 ``None``。
         """
         return await self._require_query_service().get_stranger_info(
-            str(self._normalize_positive_int(user_id, "user_id"))
+            str(self._normalize_positive_int(user_id, "user_id")),
+            no_cache=bool(no_cache),
         )
 
     @API("adapter.napcat.account.get_friend_list", description="获取好友列表", version="1", public=True)

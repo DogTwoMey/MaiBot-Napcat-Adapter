@@ -13,20 +13,33 @@ class NapCatFileApiMixin(NapCatApiSupportMixin):
     """NapCat 文件、媒体与流式相关 API。"""
 
     @API("adapter.napcat.file.get_record", description="获取语音文件详情", version="1", public=True)
-    async def api_get_record(self, file: object, file_id: str = "") -> Optional[Dict[str, Any]]:
+    async def api_get_record(
+        self,
+        file: object = "",
+        file_id: str = "",
+        out_format: str = "wav",
+    ) -> Optional[Dict[str, Any]]:
         """获取语音文件详情。
 
         Args:
             file: 语音文件名。
             file_id: 可选文件 ID。
+            out_format: 输出格式；默认保持兼容旧行为的 ``wav``。
 
         Returns:
             Optional[Dict[str, Any]]: 语音文件详情；失败时返回 ``None``。
         """
+        normalized_file_name = str(file or "").strip() or None
         normalized_file_id = str(file_id or "").strip() or None
+        normalized_out_format = str(out_format or "").strip()
+
+        if normalized_file_name is None and normalized_file_id is None:
+            raise ValueError("file 或 file_id 至少提供一个")
+
         return await self._require_query_service().get_record_detail(
-            file_name=self._normalize_non_empty_string(file, "file"),
+            file_name=normalized_file_name,
             file_id=normalized_file_id,
+            out_format=normalized_out_format,
         )
 
     @API("adapter.napcat.file.cancel_online_file", description="取消在线文件", version="1", public=True)

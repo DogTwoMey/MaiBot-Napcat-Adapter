@@ -15,24 +15,49 @@ class NapCatMessageApiMixin(NapCatApiSupportMixin):
     @API("adapter.napcat.message.send_poke", description="发送戳一戳", version="1", public=True)
     async def api_send_poke(
         self,
-        qq_id: NapCatApiIdInput,
+        user_id: Optional[NapCatApiIdInput] = None,
         group_id: Optional[NapCatApiIdInput] = None,
+        target_id: Optional[NapCatApiIdInput] = None,
+        qq_id: Optional[NapCatApiIdInput] = None,
     ) -> Dict[str, Any]:
         """发送戳一戳。
 
         Args:
-            qq_id: 目标用户号。
+            user_id: 目标用户号。
             group_id: 可选群号。
+            target_id: 官方 ``send_poke`` 动作支持的目标 ID。
+            qq_id: 兼容旧版调用方式的 ``user_id`` 别名。
 
         Returns:
             Dict[str, Any]: NapCat 返回的原始响应字典。
         """
+        normalized_user_id_input = str(user_id).strip() if user_id is not None else ""
+        normalized_qq_id_input = str(qq_id).strip() if qq_id is not None else ""
+
+        if normalized_user_id_input and normalized_qq_id_input:
+            resolved_user_id = self._normalize_positive_int(user_id, "user_id")
+            resolved_qq_id = self._normalize_positive_int(qq_id, "qq_id")
+            if resolved_user_id != resolved_qq_id:
+                raise ValueError("user_id 与 qq_id 不能同时传递不同的值")
+        elif normalized_user_id_input:
+            resolved_user_id = self._normalize_positive_int(user_id, "user_id")
+        elif normalized_qq_id_input:
+            resolved_user_id = self._normalize_positive_int(qq_id, "qq_id")
+        else:
+            raise ValueError("user_id 不能为空")
+
         normalized_group_id: Optional[int] = None
         if group_id is not None and str(group_id).strip():
             normalized_group_id = self._normalize_positive_int(group_id, "group_id")
+
+        normalized_target_id: Optional[int] = None
+        if target_id is not None and str(target_id).strip():
+            normalized_target_id = self._normalize_positive_int(target_id, "target_id")
+
         return await self._require_query_service().send_poke(
-            user_id=self._normalize_positive_int(qq_id, "qq_id"),
+            user_id=resolved_user_id,
             group_id=normalized_group_id,
+            target_id=normalized_target_id,
         )
 
     @API("adapter.napcat.message.delete_msg", description="撤回消息", version="1", public=True)
@@ -110,17 +135,31 @@ class NapCatMessageApiMixin(NapCatApiSupportMixin):
         )
 
     @API("adapter.napcat.message.get_forward_msg", description="获取合并转发消息", version="1", public=True)
-    async def api_get_forward_msg(self, message_id: object) -> Optional[Dict[str, Any]]:
+    async def api_get_forward_msg(
+        self,
+        message_id: object = "",
+        id: object = "",
+    ) -> Optional[Dict[str, Any]]:
         """获取合并转发消息详情。
 
         Args:
             message_id: 合并转发消息 ID。
+            id: NapCat 官方文档中的兼容字段。
 
         Returns:
             Optional[Dict[str, Any]]: 合并转发消息详情；失败时返回 ``None``。
         """
+        normalized_message_id = str(message_id or "").strip()
+        normalized_forward_id = str(id or "").strip()
+
+        if normalized_message_id and normalized_forward_id and normalized_message_id != normalized_forward_id:
+            raise ValueError("message_id 与 id 不能同时传递不同的值")
+        if not normalized_message_id and not normalized_forward_id:
+            raise ValueError("message_id 或 id 至少提供一个")
+
         return await self._require_query_service().get_forward_message(
-            self._normalize_non_empty_string(message_id, "message_id")
+            message_id=normalized_message_id or None,
+            forward_id=normalized_forward_id or None,
         )
 
     @API("adapter.napcat.message.ark_share_group", description="分享群 (Ark)", version="1", public=True)
