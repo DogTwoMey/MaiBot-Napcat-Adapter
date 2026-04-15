@@ -245,13 +245,22 @@ class NapCatChatConfig(PluginConfigBase):
             "order": 0,
         },
     )
+    show_dropped_chat_list_messages: bool = Field(
+        default=False,
+        description="是否显示未通过聊天名单过滤而被丢弃的消息日志。",
+        json_schema_extra={
+            "hint": "关闭后不会记录群聊/私聊因未通过聊天名单过滤而被丢弃的日志，默认关闭以减少刷屏。",
+            "label": "显示聊天名单丢弃日志",
+            "order": 1,
+        },
+    )
     group_list_type: Literal["whitelist", "blacklist"] = Field(
         default=DEFAULT_CHAT_LIST_TYPE,
         description="群聊名单模式。",
         json_schema_extra={
             "hint": "白名单模式只接收列表内群聊，黑名单模式则忽略列表内群聊。",
             "label": "群聊名单模式",
-            "order": 1,
+            "order": 2,
         },
     )
     group_list: List[str] = Field(
@@ -260,7 +269,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "群号会被统一转换为字符串并自动去重。",
             "label": "群聊名单",
-            "order": 2,
+            "order": 3,
             "placeholder": "请输入群号",
         },
     )
@@ -270,7 +279,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "白名单模式只接收列表内私聊，黑名单模式则忽略列表内私聊。",
             "label": "私聊名单模式",
-            "order": 3,
+            "order": 4,
         },
     )
     private_list: List[str] = Field(
@@ -279,7 +288,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "用户 ID 会被统一转换为字符串并自动去重。",
             "label": "私聊名单",
-            "order": 4,
+            "order": 5,
             "placeholder": "请输入用户 ID",
         },
     )
@@ -289,7 +298,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "这些用户的消息会在进入 Host 之前被直接丢弃。",
             "label": "全局屏蔽用户",
-            "order": 5,
+            "order": 6,
             "placeholder": "请输入用户 ID",
         },
     )
@@ -299,7 +308,7 @@ class NapCatChatConfig(PluginConfigBase):
         json_schema_extra={
             "hint": "开启后会忽略来自 QQ 官方机器人或频道机器人的消息。",
             "label": "屏蔽官方机器人",
-            "order": 6,
+            "order": 7,
         },
     )
 

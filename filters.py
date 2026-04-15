@@ -41,7 +41,10 @@ class NapCatChatFilter:
 
         if group_id:
             if not self._is_id_allowed_by_list_policy(group_id, chat_config.group_list_type, chat_config.group_list):
-                self._logger.warning(f"NapCat 群聊 {group_id} 未通过聊天名单过滤，消息被丢弃")
+                self._log_chat_list_rejection(
+                    chat_config.show_dropped_chat_list_messages,
+                    f"NapCat 群聊 {group_id} 未通过聊天名单过滤，消息被丢弃",
+                )
                 return False
             return True
 
@@ -50,9 +53,17 @@ class NapCatChatFilter:
             chat_config.private_list_type,
             chat_config.private_list,
         ):
-            self._logger.warning(f"NapCat 私聊用户 {sender_user_id} 未通过聊天名单过滤，消息被丢弃")
+            self._log_chat_list_rejection(
+                chat_config.show_dropped_chat_list_messages,
+                f"NapCat 私聊用户 {sender_user_id} 未通过聊天名单过滤，消息被丢弃",
+            )
             return False
         return True
+
+    def _log_chat_list_rejection(self, enabled: bool, message: str) -> None:
+        """按配置决定是否记录聊天名单过滤丢弃日志。"""
+        if enabled:
+            self._logger.warning(message)
 
     @staticmethod
     def _is_id_allowed_by_list_policy(target_id: str, list_type: str, configured_ids: Collection[str]) -> bool:
