@@ -148,7 +148,7 @@ class NapCatOutboundSegmentEncoder:
         binary_base64 = str(item.get("binary_data_base64") or "").strip()
         if not binary_base64:
             return []
-        return [{"type": "image", "data": {"file": f"base64://{binary_base64}", "subtype": 0}}]
+        return [{"type": "image", "data": {"file": f"base64://{binary_base64}", "sub_type": 0}}]
 
     def _build_emoji_segments(self, item: Mapping[str, Any]) -> List[Dict[str, Any]]:
         """构造动画表情消息段。
@@ -167,7 +167,7 @@ class NapCatOutboundSegmentEncoder:
                 "type": "image",
                 "data": {
                     "file": f"base64://{binary_base64}",
-                    "subtype": 1,
+                    "sub_type": 1,
                     "summary": "[动画表情]",
                 },
             }
