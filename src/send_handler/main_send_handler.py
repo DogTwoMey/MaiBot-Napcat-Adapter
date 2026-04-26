@@ -129,6 +129,21 @@ class SendHandler:
         message_segment: Seg = raw_message_base.message_segment
         group_info: GroupInfo = message_info.group_info
         user_info: UserInfo = message_info.user_info
+        # 取出 MaiBot 出站消息中携带的路由元数据。MaiBot 约定：
+        #   - user_info.user_id 表示"发送者"（通常就是 bot 自己）
+        #   - additional_config["platform_io_target_user_id"] 才是真正的收件人 QQ
+        #   - additional_config["platform_io_target_group_id"] 才是真正的收件群号
+        additional_config = getattr(message_info, "additional_config", None) or {}
+        target_group_override: str | None = None
+        target_user_override: str | None = None
+        if isinstance(additional_config, dict):
+            tg = additional_config.get("platform_io_target_group_id")
+            tu = additional_config.get("platform_io_target_user_id")
+            if tg is not None and str(tg).strip():
+                target_group_override = str(tg).strip()
+            if tu is not None and str(tu).strip():
+                target_user_override = str(tu).strip()
+
         target_id: int = None
         action: str = None
         id_name: str = None
@@ -145,12 +160,21 @@ class SendHandler:
 
         if group_info and user_info:
             logger.debug("发送群聊消息")
-            target_id = group_info.group_id
+            # 优先用 additional_config 里的路由提示；无则退回 group_info.group_id
+            target_id = target_group_override or group_info.group_id
             action = "send_group_msg"
             id_name = "group_id"
         elif user_info:
             logger.debug("发送私聊消息")
-            target_id = user_info.user_id
+            # 私聊收件人 = additional_config.platform_io_target_user_id（MaiBot 的真实收件人）
+            # 若 MaiBot 未提供则退回 user_info.user_id，但这是兜底路径，易发往 bot 自己
+            target_id = target_user_override or user_info.user_id
+            if target_user_override is None:
+                logger.warning(
+                    "私聊消息缺少 additional_config.platform_io_target_user_id，"
+                    "回退使用 user_info.user_id=%s，如果这是 bot 自己的 QQ 将出现自环",
+                    user_info.user_id,
+                )
             action = "send_private_msg"
             id_name = "user_id"
         else:
