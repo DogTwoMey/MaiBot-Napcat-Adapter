@@ -19,7 +19,8 @@ elua.confirmed
 # C extensions
 *.so
 /results
-config_backup/
+config.toml.backup.*
+config_back/
 # Distribution / packaging
 .Python
 build/
